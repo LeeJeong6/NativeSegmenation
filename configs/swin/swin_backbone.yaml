@@ -1,0 +1,10 @@
+MODEL:
+  TYPE: swin
+  NAME: swin
+  DROP_PATH_RATE: 0.5
+  SWIN:
+    EMBED_DIM: 64
+    DEPTHS: [ 3, 4, 18, 5 ]
+    MLP_RATIO: 3.
+    NUM_HEADS: [ 4, 8, 16, 32 ]
+    WINDOW_SIZE: 7

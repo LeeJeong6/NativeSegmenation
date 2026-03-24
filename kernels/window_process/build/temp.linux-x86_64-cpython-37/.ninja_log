@@ -1,0 +1,3 @@
+# ninja log v7
+0	17091	1774337096448510548	/raid/jeongik/nativeseg_2nd/Swin-Transformer/kernels/window_process/build/temp.linux-x86_64-cpython-37/swin_window_process.o	e7514518d1f1a08c
+0	25974	1774337096448510548	/raid/jeongik/nativeseg_2nd/Swin-Transformer/kernels/window_process/build/temp.linux-x86_64-cpython-37/swin_window_process_kernel.o	bc952ba7b77ab15
