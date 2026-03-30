@@ -1,11 +1,6 @@
 # Checkpoints
 *.pth
 
-# Generated outputs
-output/
-segmentation/
-
 # Python cache
 __pycache__/
 *.py[cod]
-*.pyc
