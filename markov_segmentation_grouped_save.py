@@ -1,10 +1,29 @@
-# --------------------------------------------------------
-# Swin Transformer
-# Copyright (c) 2021 Microsoft
-# Licensed under The MIT License [see LICENSE for details]
-# Written by Ze Liu
-# --------------------------------------------------------
 
+# 시각화저장코드
+# CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.launch --nproc_per_node 1 --master_port 1215 markov_segmentation_grouped_save.py --eval --resume /raid/jeongik/nativeseg_2nd/ckpt_epoch_73.pth  --batch-size 32
+
+
+"""
+
+마르코프체인으로 시각화도전해보자 
+
+class segmentation
+
+A_ups = A_ups[0] @ A_ups[1] @ A_ups[2]
+(B,3136,49) = (B,3136,784) @ (B,784,196) @ (B,196,49)
+마지막 49라는건 모델이 자연스럽게 이해한 segmentation map임. 
+3136이 49개의 cluster로 매핑될 확률이라고 이해 가능. 
+
+마지막 레이어의 49개 토큰은 avgpool 후에 head로 class distribution을 출력함. 
+여기서 49개의 토큰을 전부 head에 통과시킨 후 (B,49,1000)행렬을 만듬
+그리고 A_ups와 @ 하면 (B,3136,1000)이 됨. 
+이를 시각화하는 코드임.
+
+"/raid/jeongik/nativeseg_2nd/Swin-Transformer/segmentation/class_projection" 에 저장됨
+
+
+
+"""
 import os
 import time
 import json
@@ -31,11 +50,127 @@ from utils import load_checkpoint, load_pretrained, save_checkpoint, NativeScale
 
 # pytorch major version (1.x or 2.x)
 PYTORCH_MAJOR_VERSION = int(torch.__version__.split('.')[0])
+import os
+import matplotlib.pyplot as plt
+import torch.nn.functional as F
+
+import random
+import numpy as np
+import torch
+
+def set_seed(seed=42):
+
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"Seed fixed: {seed}")
+
+SEGMENTATION_ROOT_DIR = "./segmentation"
+SEGMENTATION_VARIANT_DIR = "class_projection"
+IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+IMAGENET_STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
 
+def get_segmentation_output_dir(root_dir, variant_dir):
+    output_dir = os.path.join(root_dir, variant_dir)
+    os.makedirs(output_dir, exist_ok=True)
+    return output_dir
+
+
+def build_segmentation_filename(rank, batch_idx, sample_idx):
+    return f"seg_vis_rank{rank:02d}_batch{batch_idx:05d}_sample{sample_idx:02d}.png"
+
+
+def denormalize_imagenet(images):
+    mean = IMAGENET_MEAN.to(device=images.device, dtype=images.dtype)
+    std = IMAGENET_STD.to(device=images.device, dtype=images.dtype)
+    return (images * std + mean).clamp(0, 1)
+
+
+def compose_assignment_chain(a_ups_list):
+    if len(a_ups_list) == 0:
+        raise ValueError("a_ups_list is empty")
+    a_ups_chain = a_ups_list[0]
+    for mat in a_ups_list[1:]:
+        a_ups_chain = a_ups_chain @ mat
+    return a_ups_chain
+
+
+def build_patch_segmentation(tokens, a_ups_list, classifier):
+    a_total = compose_assignment_chain(a_ups_list)
+
+    bsz, n_segment, dim = tokens.shape
+    num_classes = classifier.out_features
+
+    tokens_flat = tokens.reshape(bsz * n_segment, dim)
+    segment_logits = classifier(tokens_flat).reshape(bsz, n_segment, num_classes)
+    patch_logits = a_total @ segment_logits
+
+    _, n_patch, _ = patch_logits.shape
+    grid_size = int(n_patch ** 0.5)
+    if grid_size * grid_size != n_patch:
+        raise ValueError(f"Unexpected patch count: {n_patch}")
+
+    patch_logits = patch_logits.permute(0, 2, 1).reshape(bsz, num_classes, grid_size, grid_size)
+    return patch_logits
+
+
+def save_class_segmentation_visualizations(images, seg_mask, batch_idx, rank, save_root=SEGMENTATION_ROOT_DIR):
+    output_dir = get_segmentation_output_dir(save_root, SEGMENTATION_VARIANT_DIR)
+    images_denorm = denormalize_imagenet(images).cpu()
+    seg_mask = seg_mask.cpu()
+
+    batch_size = images_denorm.shape[0]
+    for sample_idx in range(batch_size):
+        image_np = images_denorm[sample_idx].permute(1, 2, 0).numpy()
+        mask_np = seg_mask[sample_idx].numpy()
+
+        fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+        ax[0].imshow(image_np)
+        ax[0].set_title("Original (denorm)")
+        ax[0].axis("off")
+
+        ax[1].imshow(mask_np)
+        ax[1].set_title("Segmentation")
+        ax[1].axis("off")
+
+        save_name = build_segmentation_filename(rank=rank, batch_idx=batch_idx, sample_idx=sample_idx)
+        save_file = os.path.join(output_dir, save_name)
+        print(save_file)
+        plt.savefig(save_file, bbox_inches="tight")
+        plt.close(fig)
+
+
+def debug_markov_chain(a_ups_list):
+    a_ups_chain = compose_assignment_chain(a_ups_list)
+    row_sums = a_ups_chain.sum(dim=-1)
+    max_row_error = (row_sums - 1.0).abs().max().item()
+    mean_row_error = (row_sums - 1.0).abs().mean().item()
+
+    bsz = a_ups_chain.shape[0]
+    n_final = a_ups_chain.shape[-1]
+    test_feat = torch.randn(bsz, n_final, 8, device=a_ups_chain.device)
+
+    upsample_step = test_feat
+    for mat in reversed(a_ups_list):
+        upsample_step = mat @ upsample_step
+    upsample_direct = a_ups_chain @ test_feat
+    direct_vs_step_max_diff = (upsample_direct - upsample_step).abs().max().item()
+
+    print(f"[markov] chain shape: {tuple(a_ups_chain.shape)}")
+    print(f"[markov] row-stochastic error: max={max_row_error:.6e}, mean={mean_row_error:.6e}")
+    print(f"[markov] direct-vs-step max diff: {direct_vs_step_max_diff:.6e}")
+    return a_ups_chain
 def parse_option():
     parser = argparse.ArgumentParser('Swin Transformer training and evaluation script', add_help=False)
-    parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
+    parser.add_argument('--cfg', type=str, default="/raid/jeongik/nativeseg_2nd/Swin-Transformer/configs/swin/Senatra_segmentation.yaml", metavar="FILE", help='path to config file', )
     parser.add_argument(
         "--opts",
         help="Modify config options by adding 'KEY VALUE' pairs. ",
@@ -45,7 +180,7 @@ def parse_option():
 
     # easy config modification
     parser.add_argument('--batch-size', type=int, help="batch size for single GPU")
-    parser.add_argument('--data-path', type=str, help='path to dataset')
+    parser.add_argument('--data-path', type=str, default='/raid/Datasets/imagenet/')
     parser.add_argument('--zip', action='store_true', help='use zipped dataset instead of folder dataset')
     parser.add_argument('--cache-mode', type=str, default='part', choices=['no', 'full', 'part'],
                         help='no: no cache, '
@@ -53,7 +188,7 @@ def parse_option():
                              'part: sharding the dataset into nonoverlapping pieces and only cache one piece')
     parser.add_argument('--pretrained',
                         help='pretrained weight from checkpoint, could be imagenet22k pretrained weight')
-    parser.add_argument('--resume', help='resume from checkpoint')
+    parser.add_argument('--resume', help='resume from checkpoint', default = "/raid/jeongik/nativeseg_2nd/Swin-Transformer/output/Senatra/default/ckpt_epoch_23.pth")
     parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
     parser.add_argument('--use-checkpoint', action='store_true',
                         help="whether to use gradient checkpointing to save memory")
@@ -88,6 +223,7 @@ def parse_option():
 
 
 def main(config):
+    set_seed()
     dataset_train, dataset_val, data_loader_train, data_loader_val, mixup_fn = build_loader(config)
 
     logger.info(f"Creating model:{config.MODEL.TYPE}/{config.MODEL.NAME}")
@@ -104,7 +240,7 @@ def main(config):
     model_without_ddp = model
 
     optimizer = build_optimizer(config, model)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
+    # model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[config.LOCAL_RANK], broadcast_buffers=False)
     loss_scaler = NativeScalerWithGradNormCount()
 
     if config.TRAIN.ACCUMULATION_STEPS > 1:
@@ -192,6 +328,8 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
 
         with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
             outputs = model(samples)
+        if isinstance(outputs, (tuple, list)):
+            outputs = outputs[0]
         loss = criterion(outputs, targets)
         loss = loss / config.TRAIN.ACCUMULATION_STEPS
 
@@ -229,8 +367,6 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
                 f'mem {memory_used:.0f}MB')
     epoch_time = time.time() - start
     logger.info(f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}")
-
-
 @torch.no_grad()
 def validate(config, data_loader, model):
     criterion = torch.nn.CrossEntropyLoss()
@@ -248,8 +384,31 @@ def validate(config, data_loader, model):
 
         # compute output
         with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
-            output = model(images)
-
+            tokens, output, a_ups_list, _ = model(images)
+        
+            # x, a_ups_list, a_down_list = output
+            
+            seg_map = build_patch_segmentation(
+                tokens,
+                a_ups_list,
+                model.head
+            )
+            
+            seg_map = F.interpolate(
+                seg_map,
+                size=tuple(images.shape[-2:]),
+                mode="bilinear"
+            )
+            seg_mask = seg_map.argmax(dim=1)
+            rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+            save_class_segmentation_visualizations(
+                images=images,
+                seg_mask=seg_mask,
+                batch_idx=idx,
+                rank=rank,
+            )
+            # x, a_ups_list, a_down_list = output
+        # print(len(a_ups_list), len(a_down_list))
         # measure accuracy and record loss
         loss = criterion(output, target)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
