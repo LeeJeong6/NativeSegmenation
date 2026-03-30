@@ -14,6 +14,8 @@ This repository was built because I could not find an official open-source imple
 
 ## Result
 
+(177/300 epochs)
+
 - ImageNet-1K validation Top-1: `76.150%`
 - ImageNet-1K validation Top-5: `93.445%`
 - Best recorded accuracy in log: `76.27%`
