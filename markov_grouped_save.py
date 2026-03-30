@@ -1,26 +1,3 @@
-
-
-# CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.launch --nproc_per_node 1 --master_port 1215 markov_grouped_save.py --eval --cfg /raid/jeongik/nativeseg_2nd/Native_Segmentation_Vision_Transformer/configs/swin/Senatra.yaml --resume /raid/jeongik/nativeseg_2nd/ckpt_epoch_73.pth --data-path /raid/Datasets/imagenet/ --batch-size 32
-
-"""
-
-마릌코프체인으로 시각화도전해보자 
-
-clustering segmentation
-
-A_ups = A_ups[0] @ A_ups[1] @ A_ups[2]
-(B,3136,49) = (B,3136,784) @ (B,784,196) @ (B,196,49)
-마지막 49라는건 모델이 자연스럽게 이해한 segmentation map임. 
-각 patch token (3136개)이
-final token (49개) 중 어디에 속할 확률 -> 49 semantic regions
-
-
-이를 시각화하는 코드임
-"/raid/jeongik/nativeseg_2nd/Swin-Transformer/segmentation/assignment_chain" 에 저장됨
-
-
-"""
-
 import os
 import time
 import json

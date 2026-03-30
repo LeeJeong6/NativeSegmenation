@@ -1,29 +1,4 @@
 
-# 시각화저장코드
-# CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.launch --nproc_per_node 1 --master_port 1215 markov_segmentation_grouped_save.py --eval --resume /raid/jeongik/nativeseg_2nd/ckpt_epoch_73.pth  --batch-size 32
-
-
-"""
-
-마르코프체인으로 시각화도전해보자 
-
-class segmentation
-
-A_ups = A_ups[0] @ A_ups[1] @ A_ups[2]
-(B,3136,49) = (B,3136,784) @ (B,784,196) @ (B,196,49)
-마지막 49라는건 모델이 자연스럽게 이해한 segmentation map임. 
-3136이 49개의 cluster로 매핑될 확률이라고 이해 가능. 
-
-마지막 레이어의 49개 토큰은 avgpool 후에 head로 class distribution을 출력함. 
-여기서 49개의 토큰을 전부 head에 통과시킨 후 (B,49,1000)행렬을 만듬
-그리고 A_ups와 @ 하면 (B,3136,1000)이 됨. 
-이를 시각화하는 코드임.
-
-"/raid/jeongik/nativeseg_2nd/Swin-Transformer/segmentation/class_projection" 에 저장됨
-
-
-
-"""
 import os
 import time
 import json
