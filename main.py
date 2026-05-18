@@ -1,5 +1,9 @@
-#CUDA_VISIBLE_DEVICES=2 python -m torch.distributed.launch --nproc_per_node 1 --master_port 12345 main.py --cfg configs/swin/Senatra.yaml --data-path /raid/Datasets/imagenet --batch-size 128
-#CUDA_VISIBLE_DEVICES=1 python -m torch.distributed.launch --nproc_per_node 1 --master_port 1215 main.py --eval --cfg /raid/jeongik/nativeseg_2nd/Native_Segmentation_Vision_Transformer/configs/swin/Senatra.yaml --resume /raid/jeongik/nativeseg_2nd/Swin-Transformer/output/Senatra/default/ckpt_epoch_23.pth --data-path /raid/Datasets/imagenet/
+# Single GPU:
+# CUDA_VISIBLE_DEVICES=3 torchrun --nproc_per_node=1 --master-port 1215 main.py --cfg configs/swin/Senatra.yaml --data-path /raid/Datasets/imagenet/ --batch-size 64
+# Multi GPU (e.g. 4 GPUs):
+# CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 --master-port 1215 main.py --cfg configs/swin/Senatra.yaml --data-path /raid/Datasets/imagenet/ --batch-size 64
+# Eval:
+# CUDA_VISIBLE_DEVICES=3 torchrun --nproc_per_node=1 --master-port 1215 main.py --eval --cfg configs/swin/Senatra.yaml --resume output/Senatra/default/ckpt_epoch_X.pth --data-path /raid/Datasets/imagenet/
 # --------------------------------------------------------
 # Swin Transformer
 # Copyright (c) 2021 Microsoft
