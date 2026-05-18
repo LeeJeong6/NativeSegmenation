@@ -1,15 +1,7 @@
 # Single GPU:
-# CUDA_VISIBLE_DEVICES=3 torchrun --nproc_per_node=1 --master-port 1215 main.py --cfg configs/swin/Senatra.yaml --data-path /raid/Datasets/imagenet/ --batch-size 64
+# CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 --master-port 1215 train.py --cfg configs/swin/Senatra.yaml --data-path /raid/Datasets/imagenet/ --batch-size 64
 # Multi GPU (e.g. 4 GPUs):
-# CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 --master-port 1215 main.py --cfg configs/swin/Senatra.yaml --data-path /raid/Datasets/imagenet/ --batch-size 64
-# Eval:
-# CUDA_VISIBLE_DEVICES=3 torchrun --nproc_per_node=1 --master-port 1215 main.py --eval --cfg configs/swin/Senatra.yaml --resume output/Senatra/default/ckpt_epoch_X.pth --data-path /raid/Datasets/imagenet/
-# --------------------------------------------------------
-# Swin Transformer
-# Copyright (c) 2021 Microsoft
-# Licensed under The MIT License [see LICENSE for details]
-# Written by Ze Liu
-# --------------------------------------------------------
+# CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 --master-port 1215 train.py --cfg configs/swin/Senatra.yaml --data-path /raid/Datasets/imagenet/ --batch-size 64
 
 import os
 import time
@@ -35,61 +27,37 @@ from logger import create_logger
 from utils import load_checkpoint, load_pretrained, save_checkpoint, NativeScalerWithGradNormCount, auto_resume_helper, \
     reduce_tensor
 
-# pytorch major version (1.x or 2.x)
 PYTORCH_MAJOR_VERSION = int(torch.__version__.split('.')[0])
 
 
 def parse_option():
-    parser = argparse.ArgumentParser('Swin Transformer training and evaluation script', add_help=False)
-    parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
-    parser.add_argument(
-        "--opts",
-        help="Modify config options by adding 'KEY VALUE' pairs. ",
-        default=None,
-        nargs='+',
-    )
-
-    # easy config modification
-    parser.add_argument('--batch-size', type=int,default=4, help="batch size for single GPU")
+    parser = argparse.ArgumentParser('Senatra training script', add_help=False)
+    parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file')
+    parser.add_argument("--opts", help="Modify config options by adding 'KEY VALUE' pairs.", default=None, nargs='+')
+    parser.add_argument('--batch-size', type=int, default=4, help="batch size for single GPU")
     parser.add_argument('--data-path', type=str, help='path to dataset')
     parser.add_argument('--zip', action='store_true', help='use zipped dataset instead of folder dataset')
-    parser.add_argument('--cache-mode', type=str, default='part', choices=['no', 'full', 'part'],
-                        help='no: no cache, '
-                             'full: cache all data, '
-                             'part: sharding the dataset into nonoverlapping pieces and only cache one piece')
-    parser.add_argument('--pretrained',
-                        help='pretrained weight from checkpoint, could be imagenet22k pretrained weight')
+    parser.add_argument('--cache-mode', type=str, default='part', choices=['no', 'full', 'part'])
+    parser.add_argument('--pretrained', help='pretrained weight from checkpoint')
     parser.add_argument('--resume', help='resume from checkpoint')
     parser.add_argument('--accumulation-steps', type=int, help="gradient accumulation steps")
-    parser.add_argument('--use-checkpoint', action='store_true',
-                        help="whether to use gradient checkpointing to save memory")
+    parser.add_argument('--use-checkpoint', action='store_true', help="use gradient checkpointing to save memory")
     parser.add_argument('--disable_amp', action='store_true', help='Disable pytorch amp')
-    parser.add_argument('--amp-opt-level', type=str, choices=['O0', 'O1', 'O2'],
-                        help='mixed precision opt level, if O0, no amp is used (deprecated!)')
-    parser.add_argument('--output', default='output', type=str, metavar='PATH',
-                        help='root of output folder, the full path is <output>/<model_name>/<tag> (default: output)')
+    parser.add_argument('--amp-opt-level', type=str, choices=['O0', 'O1', 'O2'])
+    parser.add_argument('--output', default='output', type=str, metavar='PATH')
     parser.add_argument('--tag', help='tag of experiment')
     parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
     parser.add_argument('--throughput', action='store_true', help='Test throughput only')
 
-    # distributed training
-    # for pytorch >= 2.0, use `os.environ['LOCAL_RANK']` instead
-    # (see https://pytorch.org/docs/stable/distributed.html#launch-utility)
     if PYTORCH_MAJOR_VERSION == 1:
         parser.add_argument("--local_rank", type=int, required=True, help='local rank for DistributedDataParallel')
 
-    # for acceleration
-    parser.add_argument('--fused_window_process', action='store_true',
-                        help='Fused window shift & window partition, similar for reversed part.')
-    parser.add_argument('--fused_layernorm', action='store_true', help='Use fused layernorm.')
-    ## overwrite optimizer in config (*.yaml) if specified, e.g., fused_adam/fused_lamb
-    parser.add_argument('--optim', type=str,
-                        help='overwrite optimizer if provided, can be adamw/sgd/fused_adam/fused_lamb.')
+    parser.add_argument('--fused_window_process', action='store_true')
+    parser.add_argument('--fused_layernorm', action='store_true')
+    parser.add_argument('--optim', type=str)
 
     args, unparsed = parser.parse_known_args()
-
     config = get_config(args)
-
     return args, config
 
 
@@ -118,12 +86,6 @@ def main(config):
     else:
         lr_scheduler = build_scheduler(config, optimizer, len(data_loader_train))
 
-    # if config.AUG.MIXUP > 0.:
-    #     # smoothing is handled with mixup label transform
-    #     criterion = SoftTargetCrossEntropy()
-    # elif config.MODEL.LABEL_SMOOTHING > 0.:
-    #     criterion = LabelSmoothingCrossEntropy(smoothing=config.MODEL.LABEL_SMOOTHING)
-    # else:
     criterion = torch.nn.CrossEntropyLoss()
 
     max_accuracy = 0.0
@@ -173,8 +135,7 @@ def main(config):
         logger.info(f'Max accuracy: {max_accuracy:.2f}%')
 
     total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    logger.info('Training time {}'.format(total_time_str))
+    logger.info('Training time {}'.format(str(datetime.timedelta(seconds=int(total_time)))))
 
 
 def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mixup_fn, lr_scheduler, loss_scaler):
@@ -196,12 +157,10 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         if mixup_fn is not None:
             samples, targets = mixup_fn(samples, targets)
 
-        # with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
-        outputs = model(samples, return_assignments = False)
+        outputs = model(samples, return_assignments=False)
         loss = criterion(outputs, targets)
         loss = loss / config.TRAIN.ACCUMULATION_STEPS
 
-        # this attribute is added by timm on one optimizer (adahessian)
         is_second_order = hasattr(optimizer, 'is_second_order') and optimizer.is_second_order
         grad_norm = loss_scaler(loss, optimizer, clip_grad=config.TRAIN.CLIP_GRAD,
                                 parameters=model.parameters(), create_graph=is_second_order,
@@ -214,7 +173,7 @@ def train_one_epoch(config, model, criterion, data_loader, optimizer, epoch, mix
         torch.cuda.synchronize()
 
         loss_meter.update(loss.item(), targets.size(0))
-        if grad_norm is not None:  # loss_scaler return None if not update
+        if grad_norm is not None:
             norm_meter.update(grad_norm)
         scaler_meter.update(loss_scale_value)
         batch_time.update(time.time() - end)
@@ -252,11 +211,8 @@ def validate(config, data_loader, model):
         images = images.cuda(non_blocking=True)
         target = target.cuda(non_blocking=True)
 
-        # compute output
-        # with torch.cuda.amp.autocast(enabled=config.AMP_ENABLE):
-        output = model(images,return_assignments = True)[0]
-        
-        # measure accuracy and record loss
+        output = model(images, return_assignments=True)[0]
+
         loss = criterion(output, target)
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
 
@@ -268,7 +224,6 @@ def validate(config, data_loader, model):
         acc1_meter.update(acc1.item(), target.size(0))
         acc5_meter.update(acc5.item(), target.size(0))
 
-        # measure elapsed time
         batch_time.update(time.time() - end)
         end = time.time()
 
@@ -288,7 +243,6 @@ def validate(config, data_loader, model):
 @torch.no_grad()
 def throughput(data_loader, model, logger):
     model.eval()
-
     for idx, (images, _) in enumerate(data_loader):
         images = images.cuda(non_blocking=True)
         batch_size = images.shape[0]
@@ -318,6 +272,7 @@ if __name__ == '__main__':
     else:
         rank = -1
         world_size = -1
+
     torch.cuda.set_device(config.LOCAL_RANK)
     torch.distributed.init_process_group(backend='nccl', init_method='env://', world_size=world_size, rank=rank)
     torch.distributed.barrier()
@@ -329,11 +284,9 @@ if __name__ == '__main__':
     random.seed(seed)
     cudnn.benchmark = True
 
-    # linear scale the learning rate according to total batch size, may not be optimal
     linear_scaled_lr = config.TRAIN.BASE_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     linear_scaled_warmup_lr = config.TRAIN.WARMUP_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
     linear_scaled_min_lr = config.TRAIN.MIN_LR * config.DATA.BATCH_SIZE * dist.get_world_size() / 512.0
-    # gradient accumulation also need to scale the learning rate
     if config.TRAIN.ACCUMULATION_STEPS > 1:
         linear_scaled_lr = linear_scaled_lr * config.TRAIN.ACCUMULATION_STEPS
         linear_scaled_warmup_lr = linear_scaled_warmup_lr * config.TRAIN.ACCUMULATION_STEPS
@@ -353,7 +306,6 @@ if __name__ == '__main__':
             f.write(config.dump())
         logger.info(f"Full config saved to {path}")
 
-    # print config
     logger.info(config.dump())
     logger.info(json.dumps(vars(args)))
 
